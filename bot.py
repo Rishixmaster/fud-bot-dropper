@@ -33,27 +33,22 @@ def run_cmd(cmd, timeout=300):
         return False
 
 def random_letter_string(length=6):
-    """Generate a random string that starts with a lowercase letter, rest alphanumeric."""
     first = random.choice(string.ascii_lowercase)
     rest = ''.join(random.choices(string.ascii_lowercase + string.digits, k=length-1))
     return first + rest
 
 def random_class_name():
-    """Class name must start with uppercase letter, rest alphanumeric."""
     first = random.choice(string.ascii_uppercase)
     rest = ''.join(random.choices(string.ascii_lowercase + string.digits, k=random.randint(2,3)))
     return first + rest
 
 def generate_stub(package_name: str, main_activity: str, app_class: str = ""):
-    # Random package, classes, asset names
     pkg = "com." + random_letter_string(6) + "." + random_letter_string(6)
-    app_cls = random_class_name()   # e.g., 'Abc'
-    util_cls = random_class_name()  # e.g., 'Def'
+    app_cls = random_class_name()
+    util_cls = random_class_name()
     key_asset = random_letter_string(8) + ".txt"
     dex_asset = random_letter_string(8) + ".dex"
 
-    # Build smali for Application class
-    # Note: Use {app_class} if provided, else start launcher activity.
     loader_code = ""
     if app_class:
         loader_code = f"""
@@ -240,14 +235,14 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
         main_activity = None
         app_class = None
 
-        # Find Application class
+        # Application class
         app_match = re.search(r'<application[^>]*android:name="([^"]*)"', manifest)
         if app_match:
             app_class = app_match.group(1)
             if app_class.startswith('.'):
                 app_class = package_name + app_class
 
-        # Find main activity (launcher)
+        # Main activity
         launcher_re = re.search(r'<activity[^>]*>.*?<action android:name="android\.intent\.action\.MAIN".*?>.*?</activity>', manifest, re.DOTALL)
         if launcher_re:
             act_block = launcher_re.group(0)
@@ -257,7 +252,6 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
                 if main_activity.startswith('.'):
                     main_activity = package_name + main_activity
         if not main_activity:
-            # fallback: first activity
             first_act = re.search(r'<activity[^>]*android:name="([^"]+)"', manifest)
             if first_act:
                 main_activity = first_act.group(1)
@@ -279,7 +273,7 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
         if not run_cmd(['openssl', 'enc', '-aes-128-ecb', '-K', key_hex, '-in', dex_path, '-out', encrypted_dex], timeout=60):
             return False
 
-        # Generate stub with safe names
+        # Generate stub
         stub_app, stub_util, key_asset, dex_asset, stub_pkg, stub_app_cls = generate_stub(
             package_name, main_activity, app_class if app_class else ""
         )
@@ -296,22 +290,20 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
             if item.startswith('smali'):
                 shutil.rmtree(os.path.join(dec_dir, item), ignore_errors=True)
 
-        # Create stub smali directories (convert package to path)
-        pkg_path = stub_pkg.replace('.', '/')[1:] if stub_pkg.startswith('.') else stub_pkg.replace('.', '/')
+        # Create stub smali
+        pkg_path = stub_pkg.replace('.', '/')
         stub_dir = os.path.join(dec_dir, 'smali', pkg_path)
         os.makedirs(stub_dir, exist_ok=True)
         with open(os.path.join(stub_dir, stub_app_cls + '.smali'), 'w') as f:
             f.write(stub_app)
-        util_cls = re.search(r'\.class public L[^/]+/([^;]+);', stub_util).group(1)
-        with open(os.path.join(stub_dir, util_cls + '.smali'), 'w') as f:
+        util_cls_name = re.search(r'\.class public L[^/]+/([^;]+);', stub_util).group(1)
+        with open(os.path.join(stub_dir, util_cls_name + '.smali'), 'w') as f:
             f.write(stub_util)
 
         # Modify manifest
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = f.read()
-        # Remove any existing android:name from application
         manifest = re.sub(r'(<application[^>]*?)android:name="[^"]*"', r'\1', manifest)
-        # Add our stub application
         manifest = manifest.replace('<application', f'<application android:name="{stub_pkg}.{stub_app_cls}"')
         with open(manifest_path, 'w', encoding='utf-8') as f:
             f.write(manifest)
