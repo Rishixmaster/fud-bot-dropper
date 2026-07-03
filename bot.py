@@ -1,4 +1,4 @@
-import os, json, logging, subprocess, shutil, random, string, uuid, re
+import os, json, logging, subprocess, shutil, random, string, uuid
 from pathlib import Path
 from telegram import Update, Document
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -35,105 +35,33 @@ def run_cmd(cmd, timeout=300):
 def random_string(length=8):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
-def obfuscate_apk(input_apk: str, output_apk: str) -> bool:
+def resign_apk(input_apk: str, output_apk: str) -> bool:
+    """Sign the APK with a random keystore. No internal modifications."""
     ensure_dirs()
-    dec_dir = os.path.join(TEMP_DIR, 'dec_' + uuid.uuid4().hex[:6])
-    rebuilt = os.path.join(TEMP_DIR, 'rebuilt.apk')
-    aligned = os.path.join(TEMP_DIR, 'aligned.apk')
+    # Copy original APK to a working location (we'll overwrite it)
+    work_apk = os.path.join(TEMP_DIR, 'work.apk')
+    shutil.copy2(input_apk, work_apk)
+
+    # Generate random keystore
     ks_path = os.path.join(TEMP_DIR, 'rand.keystore')
+    ks_pass = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+    alias = ''.join(random.choices(string.ascii_letters, k=6))
+    dname = f"CN={''.join(random.choices(string.ascii_letters, k=5))}, OU=Dev, O=Org, L=Loc, ST=ST, C={random.choice(['US','GB','IN'])}"
 
-    if not run_cmd(['apktool', 'd', '-f', '-o', dec_dir, input_apk], timeout=180):
+    if not run_cmd(['keytool', '-genkey', '-v', '-keystore', ks_path, '-alias', alias, '-keyalg', 'RSA', '-keysize', '2048', '-validity', '365', '-storepass', ks_pass, '-keypass', ks_pass, '-dname', dname], timeout=30):
         return False
 
-    try:
-        manifest_path = os.path.join(dec_dir, 'AndroidManifest.xml')
-        with open(manifest_path, 'r', encoding='utf-8') as f:
-            manifest = f.read()
-
-        old_pkg = re.search(r'package="([^"]+)"', manifest).group(1)
-        new_pkg = 'com.' + random_string(6) + '.' + random_string(6)
-
-        logger.info(f"Renaming package: {old_pkg} -> {new_pkg}")
-
-        # 1. Replace in manifest
-        manifest = manifest.replace(old_pkg, new_pkg)
-        with open(manifest_path, 'w', encoding='utf-8') as f:
-            f.write(manifest)
-
-        # 2. Replace in all smali files
-        smali_dirs = [d for d in os.listdir(dec_dir) if d.startswith('smali')]
-        for smali in smali_dirs:
-            base = os.path.join(dec_dir, smali)
-            for root, dirs, files in os.walk(base):
-                for file in files:
-                    if file.endswith('.smali'):
-                        path = os.path.join(root, file)
-                        with open(path, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                        # Replace old package name with new one
-                        content = content.replace(old_pkg, new_pkg)
-                        with open(path, 'w', encoding='utf-8') as f:
-                            f.write(content)
-
-        # 3. Rename smali folder structure (optional but good)
-        old_path = old_pkg.replace('.', '/')
-        new_path = new_pkg.replace('.', '/')
-        for smali in smali_dirs:
-            base = os.path.join(dec_dir, smali)
-            for root, dirs, files in os.walk(base):
-                if old_path in root:
-                    new_root = root.replace(old_path, new_path)
-                    os.makedirs(new_root, exist_ok=True)
-                    for file in files:
-                        shutil.move(os.path.join(root, file), os.path.join(new_root, file))
-            # Remove empty old directories
-            for root, dirs, files in os.walk(base, topdown=False):
-                if root != base and not os.listdir(root):
-                    os.rmdir(root)
-
-        # 4. Randomize some resource file names (just for extra obfuscation)
-        res_dir = os.path.join(dec_dir, 'res')
-        if os.path.exists(res_dir):
-            for root, dirs, files in os.walk(res_dir):
-                for file in files:
-                    name, ext = os.path.splitext(file)
-                    if ext in ('.png', '.jpg', '.xml'):
-                        new_name = random_string(10) + ext
-                        os.rename(os.path.join(root, file), os.path.join(root, new_name))
-
-        # 5. Rebuild APK
-        if not run_cmd(['apktool', 'b', '-o', rebuilt, dec_dir], timeout=180):
-            return False
-
-        # 6. Zipalign
-        if not run_cmd(['zipalign', '-v', '-p', '4', rebuilt, aligned], timeout=60):
-            return False
-
-        # 7. Sign with random keystore
-        ks_pass = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
-        alias = ''.join(random.choices(string.ascii_letters, k=6))
-        dname = f"CN={''.join(random.choices(string.ascii_letters, k=5))}, OU=Dev, O=Org, L=Loc, ST=ST, C={random.choice(['US','GB','IN'])}"
-        if not run_cmd(['keytool', '-genkey', '-v', '-keystore', ks_path, '-alias', alias, '-keyalg', 'RSA', '-keysize', '2048', '-validity', '365', '-storepass', ks_pass, '-keypass', ks_pass, '-dname', dname], timeout=30):
-            return False
-        if not run_cmd(['apksigner', 'sign', '--ks', ks_path, '--ks-pass', f'pass:{ks_pass}', '--ks-key-alias', alias, '--out', output_apk, aligned], timeout=30):
-            return False
-
-        return True
-    except Exception as e:
-        logger.exception("Obfuscation failed")
+    # Sign the APK
+    if not run_cmd(['apksigner', 'sign', '--ks', ks_path, '--ks-pass', f'pass:{ks_pass}', '--ks-key-alias', alias, '--out', output_apk, work_apk], timeout=30):
         return False
-    finally:
-        shutil.rmtree(dec_dir, ignore_errors=True)
-        for f in [rebuilt, aligned, ks_path]:
-            try: os.remove(f)
-            except: pass
 
-# Telegram handlers (unchanged)
+    return True
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("Access denied.")
         return
-    await update.message.reply_text("FUD Obfuscation Bot ready. Send APK.")
+    await update.message.reply_text("FUD Signer Bot ready. Send APK.")
 
 async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -144,25 +72,25 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc.file_name or not doc.file_name.lower().endswith(".apk"):
         await update.message.reply_text("Only APK accepted.")
         return
-    await update.message.reply_text("Processing... (max 2 min)")
+    await update.message.reply_text("Signing with random keystore... (max 30 sec)")
     fin = os.path.join(WORK_DIR, f"{uid}_{doc.file_name}")
     await (await doc.get_file()).download_to_drive(fin)
     base, ext = os.path.splitext(doc.file_name)
-    fout = os.path.join(WORK_DIR, f"{base}_fud{ext}")
+    fout = os.path.join(WORK_DIR, f"{base}_signed{ext}")
     success = False
     try:
-        success = obfuscate_apk(fin, fout)
+        success = resign_apk(fin, fout)
     except Exception as e:
         logger.exception("Error")
     try: os.remove(fin)
     except: pass
     if success:
         with open(fout, "rb") as f:
-            await update.message.reply_document(document=f, filename=os.path.basename(fout), caption="FUD APK ready.")
+            await update.message.reply_document(document=f, filename=os.path.basename(fout), caption="Signed APK ready.")
         try: os.remove(fout)
         except: pass
     else:
-        await update.message.reply_text("Processing failed. Check logs.")
+        await update.message.reply_text("Signing failed. Check logs.")
         if os.path.exists(fout): os.remove(fout)
 
 async def err_handler(update, context):
