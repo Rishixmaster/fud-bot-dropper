@@ -29,4 +29,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot.py .
 
+COPY stub.dex /app/stub.dex
+
 CMD ["python", "bot.py"]
