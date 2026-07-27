@@ -6,8 +6,11 @@ from config import Config
 from database import Database
 from handlers import get_handlers
 from worker import Worker
-from utils import ensure_dirs
+from utils import ensure_dirs   # <-- हे import करा
 import os
+
+# 🔥 सर्व directories create करा (logging च्या आधी)
+ensure_dirs()
 
 log_level = getattr(logging, Config.LOG_LEVEL.upper(), logging.INFO)
 logging.basicConfig(
@@ -21,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def main():
-    ensure_dirs()
+    # ensure_dirs() आता वरच call केले आहे, त्यामुळे येथे पुन्हा गरज नाही
     db = Database()
     await db.init()
 
