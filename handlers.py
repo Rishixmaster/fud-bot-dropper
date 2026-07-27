@@ -1,10 +1,11 @@
 import logging
+import re
+import os
 from telegram import Update, Document
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
 from config import Config
 from database import Database
-from utils import is_apk, get_file_size_mb, save_upload_file, ensure_dirs
-import os
+from utils import is_apk, save_upload_file, ensure_dirs
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     ensure_dirs()
-
     file = await document.get_file()
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     save_path = os.path.join(Config.UPLOAD_PATH, f"{user.id}_{timestamp}_{document.file_name}")
@@ -54,7 +54,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(
         f"✅ APK Received.\nTask ID: #{task_id}\n\n⏳ Processing..."
     )
-
     logger.info(f"User {user.id} uploaded {document.file_name}, task {task_id}")
 
 # -------------------- Status Command --------------------
@@ -71,7 +70,9 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "pending": "⏳",
             "processing": "🔄",
             "completed": "✅",
-            "failed": "❌"
+            "failed": "❌",
+            "sent_to_admin": "📤",
+            "waiting_for_ghost": "⏳"
         }.get(t["status"], "❓")
         lines.append(f"{status_emoji} #{t['task_id']} – {t['original_filename']} – {t['status']}")
     await update.message.reply_text("\n".join(lines))
@@ -96,7 +97,8 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Pending: {counts['pending']}\n"
         f"Processing: {counts['processing']}\n"
         f"Completed: {counts['completed']}\n"
-        f"Failed: {counts['failed']}"
+        f"Failed: {counts['failed']}\n"
+        f"Sent to Admin: {counts.get('sent_to_admin', 0)}"
     )
     await update.message.reply_text(text)
 
@@ -152,6 +154,47 @@ async def logs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = text[:4000] + "..."
     await update.message.reply_text(text)
 
+# -------------------- Admin Delivery Handler (तुम्ही Userbot मधून पाठवाल तो आला तर) --------------------
+async def handle_admin_final_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # फक्त Admin कडून येणारे messages
+    if update.effective_user.id != Config.ADMIN_ID:
+        return
+
+    if not update.message.document:
+        await update.message.reply_text("कृपया APK फाइल पाठवा.")
+        return
+
+    caption = update.message.caption or ""
+    match = re.search(r"task_id:(\d+)", caption)
+    if not match:
+        await update.message.reply_text("❌ Caption मध्ये task_id नाही. कृपया task_id घालून पाठवा.")
+        return
+
+    task_id = int(match.group(1))
+    task = await db.get_task(task_id)
+    if not task:
+        await update.message.reply_text(f"❌ Task #{task_id} सापडला नाही.")
+        return
+
+    user_id = task["user_id"]
+
+    # APK Download करा
+    file = await update.message.document.get_file()
+    temp_path = os.path.join("temp", f"final_{task_id}.apk")
+    await file.download_to_drive(temp_path)
+
+    # User ला पाठवा
+    with open(temp_path, "rb") as f:
+        await context.bot.send_document(
+            chat_id=user_id,
+            document=f,
+            caption=f"✅ Your processed APK is ready!\nTask ID: #{task_id}"
+        )
+
+    await db.update_task_status(task_id, "completed", finished_at=datetime.utcnow().isoformat())
+    await update.message.reply_text(f"✅ APK #{task_id} User {user_id} ला पाठवला.")
+    os.remove(temp_path)
+
 # -------------------- Handlers Registration --------------------
 def get_handlers():
     return [
@@ -164,4 +207,9 @@ def get_handlers():
         CommandHandler("restart", restart_cmd),
         CommandHandler("logs", logs_cmd),
         MessageHandler(filters.Document.ALL, handle_document),
+        # फक्त Admin कडून येणारे Document messages
+        MessageHandler(
+            filters.Document.ALL & filters.User(user_id=Config.ADMIN_ID),
+            handle_admin_final_delivery
+        ),
     ]
