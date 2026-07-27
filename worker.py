@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime
 from config import Config
 from database import Database
-from utils import move_file, delete_file, ensure_dirs
+from utils import delete_file, ensure_dirs
 from telegram import Bot
 
 logger = logging.getLogger(__name__)
@@ -34,14 +34,10 @@ class Worker:
         pending = await db.get_pending_tasks()
         if not pending:
             return
-        # Process only up to concurrent limit
         for task in pending[:Config.MAX_CONCURRENT_JOBS]:
             current = await db.get_task(task["task_id"])
             if current["status"] != "pending":
                 continue
-            # We use semaphore to limit concurrency, but since we are iterating, we can just process sequentially.
-            # For true concurrency, we'd use asyncio.gather with semaphore.
-            # But we'll process one by one to keep it simple.
             await self._process_task(task)
 
     async def _process_task(self, task: dict):
@@ -52,39 +48,34 @@ class Worker:
         await db.update_task_status(task_id, "processing", started_at=datetime.utcnow().isoformat())
 
         try:
-            # Simulate processing – replace with actual logic
+            # Simulate processing (Replace with your actual logic)
             await asyncio.sleep(5)
             base, ext = os.path.splitext(task["original_filename"])
             output_name = f"processed_{base}{ext}"
             output_path = os.path.join(Config.DOWNLOAD_PATH, output_name)
             shutil.copy2(file_path, output_path)
 
-            await db.update_task_status(
-                task_id,
-                "completed",
-                finished_at=datetime.utcnow().isoformat(),
-                result_path=output_path
+            # ✅ APK थेट Admin (तुमच्या Account) ला पाठवा
+            admin_id = Config.ADMIN_ID
+            caption = f"task_id:{task_id}|user:{user_id}|file:{task['original_filename']}"
+            with open(output_path, "rb") as f:
+                await self.bot.send_document(
+                    chat_id=admin_id,
+                    document=f,
+                    caption=caption
+                )
+
+            # Status update
+            await db.update_task_status(task_id, "sent_to_admin")
+
+            # User ला सूचना
+            await self.bot.send_message(
+                user_id,
+                f"📤 Your APK has been sent for further processing.\nTask ID: #{task_id}"
             )
 
-            try:
-                with open(output_path, "rb") as f:
-                    await self.bot.send_document(
-                        chat_id=user_id,
-                        document=f,
-                        caption=f"✅ APK Processing Complete!\nTask ID: #{task_id}\n\nOriginal: {task['original_filename']}"
-                    )
-            except Exception as send_err:
-                logger.error(f"Failed to send file to user {user_id}: {send_err}")
-                await db.update_task_status(
-                    task_id,
-                    "failed",
-                    finished_at=datetime.utcnow().isoformat(),
-                    error_message=f"Delivery error: {str(send_err)}"
-                )
-                await self.bot.send_message(user_id, "⚠️ Processing finished but failed to send file. Please contact admin.")
-
-            delete_file(file_path)
-            logger.info(f"Task {task_id} completed for user {user_id}")
+            delete_file(file_path)  # Cleanup original
+            logger.info(f"Task {task_id} sent to Admin (Userbot will handle forwarding).")
 
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}")
@@ -100,5 +91,5 @@ class Worker:
                     f"❌ Processing failed.\nTask ID: #{task_id}\nPlease try again later."
                 )
             except Exception as send_err:
-                logger.error(f"Could not notify user {user_id} about failure: {send_err}")
+                logger.error(f"Could not notify user {user_id}: {send_err}")
             delete_file(file_path)
