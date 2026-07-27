@@ -52,20 +52,6 @@ class Database:
             )
             await db.commit()
 
-    async def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-            row = await cursor.fetchone()
-            return dict(row) if row else None
-
-    async def get_all_users(self) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT * FROM users ORDER BY joined_date DESC")
-            rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
-
     async def add_task(self, user_id: int, original_filename: str, file_path: str) -> int:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
@@ -126,7 +112,7 @@ class Database:
     async def count_tasks_by_status(self) -> Dict[str, int]:
         async with aiosqlite.connect(self.db_path) as db:
             counts = {}
-            for status in ("pending", "processing", "completed", "failed"):
+            for status in ("pending", "processing", "completed", "failed", "sent_to_admin"):
                 cursor = await db.execute("SELECT COUNT(*) FROM tasks WHERE status = ?", (status,))
                 row = await cursor.fetchone()
                 counts[status] = row[0]
