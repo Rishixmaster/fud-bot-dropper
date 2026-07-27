@@ -16,8 +16,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await db.add_user(user.id, user.username, user.first_name, user.last_name)
     welcome_text = (
         f"👋 Welcome, {user.first_name}!\n\n"
-        "Send me an APK file and I will process ,
-        THankyou from @karmaxrishi .\n"
+        "Send me an APK file and I will process it.\n"
         "Use /status to check your tasks.\n"
         "Admins: use /stats, /users, /queue, /tasks, /restart, /logs"
     )
